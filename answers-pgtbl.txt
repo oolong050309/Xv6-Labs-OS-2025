@@ -1,0 +1,7 @@
+goost@goost:~/xv6-labs-2021-3$ python3 ./grade-lab-pgtbl ugetpid
+/home/goost/xv6-labs-2021-3/./grade-lab-pgtbl:22: SyntaxWarning: invalid escape sequence '\s'
+  INDENT_ESC = "\\\s*\.\.\\\s*"
+make: 'kernel/kernel' is up to date.
+== Test pgtbltest == (1.1s)
+== Test   pgtbltest: ugetpid ==
+  pgtbltest: ugetpid: OK
