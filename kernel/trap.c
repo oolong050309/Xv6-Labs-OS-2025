@@ -9,32 +9,14 @@
 struct spinlock tickslock;
 uint ticks;
 
+extern pte_t* walk(pagetable_t, uint64, int);
+
 extern char trampoline[], uservec[], userret[];
 
 // in kernelvec.S, calls kerneltrap().
 void kernelvec();
 
 extern int devintr();
-
-
-
-int sigalarm(int ticks, void(*handler)()) {
-  // 设置 myproc 中的相关属性
-  struct proc *p = myproc();
-  p->alarm_interval = ticks;
-  p->alarm_handler = handler;
-  p->alarm_ticks = ticks;
-  return 0;
-}
-
-int sigreturn() {
-  // 将 trapframe 恢复到时钟中断之前的状态，恢复原本正在执行的程序流
-  struct proc *p = myproc();
-  *p->trapframe = *p->alarm_trapframe;
-  p->alarm_goingoff = 0;
-  return 0;
-}
-
 
 void
 trapinit(void)
@@ -85,6 +67,56 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if(r_scause() == 15) { // 写页面错
+    uint64 va = PGROUNDDOWN(r_stval());
+    pte_t *pte;
+    if(va >= MAXVA) { // 虚拟地址错
+      printf("va is larger than MAXVA!\n");
+      p->killed = 1;
+      goto end;
+    }
+    if(va > p->sz){ // 虚拟地址超出进程的地址空间
+      printf("va is larger than sz!\n");
+      p->killed = 1;
+      goto end;
+    }
+    if((pte = walk(p->pagetable, va, 0)) == 0) {
+      printf("usertrap(): page not found\n");
+      p->killed=1;
+      goto end;
+    } 
+    // 分配一个新页面
+    if(((*pte) & PTE_COW) == 0 ||((*pte) & PTE_V) == 0 || ((*pte) & PTE_U) == 0) {
+      printf("usertrap: pte not exist or it's not cow page\n");
+      p->killed = 1;
+      goto end;
+    }
+    uint64 pa = PTE2PA(*pte);
+    acquire_refcnt();
+    uint ref = kgetref((void*)pa);
+    if(ref == 1) { // 引用次数为1，直接使用该页
+      *pte = ((*pte) & (~PTE_COW)) | PTE_W;
+    } else { // 引用次数大于1，分配物理页
+      char* mem = kalloc();
+      if(mem == 0) {
+        printf("usertrap(): memery alloc fault\n");
+        p->killed = 1;
+        release_refcnt();
+        goto end;
+      }
+      // 将旧页面复制到新页面，并用PTE_W和(~PTE_COW)设置新页的PTE
+      memmove(mem, (char*)pa, PGSIZE);
+      uint flag = (PTE_FLAGS(*pte) | PTE_W) & (~PTE_COW);
+      if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, flag) != 0) {
+        kfree(mem);
+        printf("usertrap(): can not map page\n");
+        p->killed = 1;
+        release_refcnt();
+        goto end;
+      }
+      kfree((void*)pa); //旧页引用次数减1
+    }
+    release_refcnt();
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
@@ -92,31 +124,13 @@ usertrap(void)
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
   }
-
+end:
   if(p->killed)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  //if(which_dev == 2)
-  //  yield();
-  
-  
-  // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2) {
-    if(p->alarm_interval != 0) { // 如果设定了时钟事件
-      if(--p->alarm_ticks <= 0) { // 时钟倒计时 -1 tick，如果已经到达或超过设定的 tick 数
-        if(!p->alarm_goingoff) { // 确保没有时钟正在运行
-          p->alarm_ticks = p->alarm_interval;
-          // jump to execute alarm_handler
-          *p->alarm_trapframe = *p->trapframe; // backup trapframe
-          p->trapframe->epc = (uint64)p->alarm_handler;
-          p->alarm_goingoff = 1;
-        }
-        // 如果一个时钟到期的时候已经有一个时钟处理函数正在运行，则会推迟到原处理函数运行完成后的下一个 tick 才触发这次时钟
-      }
-    }
+  if(which_dev == 2)
     yield();
-  }
 
   usertrapret();
 }

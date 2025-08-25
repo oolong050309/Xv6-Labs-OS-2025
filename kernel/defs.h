@@ -63,6 +63,10 @@ void            ramdiskrw(struct buf*);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
+int               kgetref(void*);
+void            kaddref(void*);
+void            acquire_refcnt(void);
+void            release_refcnt(void);
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -80,7 +84,6 @@ int             pipewrite(struct pipe*, uint64, int);
 void            printf(char*, ...);
 void            panic(char*) __attribute__((noreturn));
 void            printfinit(void);
-void            backtrace(void);//add
 
 // proc.c
 int             cpuid(void);
@@ -146,10 +149,6 @@ void            trapinit(void);
 void            trapinithart(void);
 extern struct spinlock tickslock;
 void            usertrapret(void);
-
-
-int             sigalarm(int ticks, void(*handler)());
-int             sigreturn();
 
 // uart.c
 void            uartinit(void);
